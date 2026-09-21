@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from importlib.resources import files
 
 from .config import Host, Settings
+from .memory import annotate
 
 
 @dataclass
@@ -33,6 +34,7 @@ class HostState:
                     delta = process["cpu_ticks"] - before["cpu_ticks"]
                     process["cpu_percent"] = max(0, 100 * delta / snapshot["clock_ticks"] / elapsed)
         self.snapshot, self.error, self.updated = snapshot, "", time.monotonic()
+        annotate(snapshot, is_uma(self))
         summary = memory_summary(snapshot)
         self.history = (self.history + [summary["used_percent"]])[-60:]
 
@@ -166,9 +168,12 @@ def process_rows(states, settings, query="", host_filter="", gpu_only=False, sor
                 continue
             row["key"] = f"{name}:{row['pid']}:{row['start_ticks']}"
             rows.append(row)
-    key = {"gpu": "gpu_bytes", "cpu": "cpu_percent"}.get(
-        sort or settings.sort, sort or settings.sort
-    )
+    key = {
+        "gpu": "gpu_bytes",
+        "cpu": "cpu_percent",
+        "ram": "ram_estimate",
+        "nvme": "nvme_estimate",
+    }.get(sort or settings.sort, sort or settings.sort)
 
     def value(row):
         if key == "impact":

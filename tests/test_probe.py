@@ -91,3 +91,37 @@ def test_partial_permissions_keep_gpu_only_process(monkeypatch):
 
 def test_remote_probe_parses_on_python38():
     ast.parse(Path(probe.__file__).read_text(), feature_version=(3, 8))
+
+
+def test_detect_nvme_through_dm_and_keep_unknown_backing_unknown(tmp_path):
+    nvme = tmp_path / "nvme1n1p1"
+    nvme.mkdir()
+    dm = tmp_path / "dm-2"
+    (dm / "slaves").mkdir(parents=True)
+    (dm / "slaves/nvme1n1p1").symlink_to(nvme)
+    assert probe.block_kind(dm) == "nvme"
+    assert probe.block_kind(tmp_path / "zram0") == "zram"
+    assert probe.block_kind(tmp_path / "sda") == "disk"
+    assert probe.block_kind(tmp_path / "loop0") == "unknown"
+    (dm / "slaves/sda").symlink_to(tmp_path / "sda")
+    assert probe.block_kind(dm) == "unknown"
+
+
+def test_swap_inventory_collects_real_zram_overhead_and_four_kib_writeback(tmp_path, monkeypatch):
+    swaps = tmp_path / "swaps"
+    swaps.write_text(
+        "Filename Type Size Used Priority\n/dev/zram0 partition 1000 500 100\n/swap\\040file file 2000 20 -2\n"
+    )
+    zram = tmp_path / "zram0"
+    zram.mkdir()
+    (zram / "mm_stat").write_text("512000 128000 150000 0 0 0 0 0")
+    (zram / "bd_stat").write_text("3 5 7")
+    (zram / "backing_dev").write_text("/dev/nvme0n1p2")
+    monkeypatch.setattr(probe, "swap_kind", lambda path: "zram" if "zram" in path else "nvme")
+    result = probe.swap_storage(swaps, tmp_path)
+    assert result["available"]
+    assert result["devices"][1]["path"] == "/swap file"
+    assert result["devices"][1]["used"] == 20 * 1024
+    assert result["zram"][0]["physical"] == 150000
+    assert result["zram"][0]["backing_bytes"] == 3 * 4096
+    assert result["zram"][0]["active_swap"]

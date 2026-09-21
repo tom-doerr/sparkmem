@@ -13,6 +13,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from .collector import HostState, is_uma, memory_summary, process_rows, refresh
 from .config import SORTS, Settings
+from .memory import host_compression
 
 
 def size(value):
@@ -104,7 +105,7 @@ class SparkMem(App):
         )
         yield DataTable(id="processes", cursor_type="row", zebra_stripes=True)
         yield Static(
-            "UMA: system RAM is shared. PSS/RSS and GPU allocations may overlap; do not add them.  Units: KiB/MiB/GiB",
+            "≈ estimated placement, not exact or additive. NVMe≈ is swap payload, not reserved disk space. Enter: calculation. Units: KiB/MiB/GiB",
             id="legend",
         )
         yield Footer()
@@ -137,6 +138,7 @@ class SparkMem(App):
         grid.styles.grid_size_columns = columns
         grid.styles.grid_rows = str(card_height)
         grid.styles.height = min(16, ((len(self.states) + columns - 1) // columns) * card_height)
+        self.query_one(DataTable).cell_padding = 0 if width < 110 else 1
         for widget in self.query(".host-card"):
             widget.styles.height = card_height
         hidden = (
@@ -233,6 +235,7 @@ class SparkMem(App):
             columns = [
                 ("host", "Host"),
                 ("current", "Charged"),
+                ("zswap", "Zswap RAM"),
                 ("anon", "Anon"),
                 ("file", "File cache"),
                 ("swap", "Swap"),
@@ -241,6 +244,8 @@ class SparkMem(App):
             ]
         else:
             titles = {
+                "ram": "RAM≈",
+                "nvme": "NVMe≈",
                 "host": "Host",
                 "pid": "PID",
                 "user": "User",
@@ -255,17 +260,20 @@ class SparkMem(App):
             }
             columns = [(key, titles[key]) for key in self.visible_columns]
         widths = {
+            "ram": 8,
+            "nvme": 8,
+            "zswap": 9,
             "host": 9,
-            "pid": 7,
+            "pid": 8,
             "user": 8,
             "label": 20,
             "command": 90,
             "cgroup": 70,
             "path": 100,
-            "pss": 6,
-            "rss": 6,
-            "gpu": 9,
-            "swap": 6,
+            "pss": 8,
+            "rss": 8,
+            "gpu": 10,
+            "swap": 8,
             "cpu": 6,
             "current": 9,
             "anon": 8,
@@ -302,7 +310,10 @@ class SparkMem(App):
                 self.row_data[row["key"]] = row
                 values = [
                     row["host"],
-                    *[size(row.get(key)) for key in ("current", "anon", "file", "swap", "limit")],
+                    *[
+                        size(row.get(key))
+                        for key in ("current", "zswap", "anon", "file", "swap", "limit")
+                    ],
                     row["path"],
                 ]
                 table.add_row(*[Text(clean(v)) for v in values], key=row["key"])
@@ -319,8 +330,13 @@ class SparkMem(App):
                 self.row_data[row["key"]] = row
                 values = []
                 for key in self.visible_columns:
-                    if key in ("pss", "rss", "swap", "gpu"):
-                        value = size(row.get("gpu_bytes" if key == "gpu" else key))
+                    if key in ("pss", "rss", "swap", "gpu", "ram", "nvme"):
+                        field = {
+                            "gpu": "gpu_bytes",
+                            "ram": "ram_estimate",
+                            "nvme": "nvme_estimate",
+                        }.get(key, key)
+                        value = size(row.get(field))
                     elif key == "cpu":
                         value = (
                             f"{row['cpu_percent']:.1f}"
@@ -386,6 +402,7 @@ class SparkMem(App):
                 "",
                 f"Charged: {size(row['current'])}   Anon: {size(row['anon'])}   File: {size(row['file'])}",
                 f"Swap: {size(row['swap'])}   Limit: {size(row['limit'])}",
+                f"Measured zswap RAM: {size(row.get('zswap'))} storing {size(row.get('zswapped'))} logical bytes",
                 "",
                 "memory.current includes descendants and charged page cache.",
                 "Parent and child rows overlap. Do not sum them.",
@@ -393,6 +410,7 @@ class SparkMem(App):
         else:
             lines += [
                 f"{row['label']} · PID {row['pid']} · user {row['user']} · parent {row.get('ppid', '—')}",
+                f"RAM≈ {size(row.get('ram_estimate'))}   NVMe≈ {size(row.get('nvme_estimate'))}",
                 f"PSS {size(row.get('pss'))}   RSS {size(row.get('rss'))}   USS {size(row.get('uss'))}",
                 f"GPU allocation {size(row.get('gpu_bytes'))}   Swap {size(row.get('swap'))}",
                 f"RSS anon {size(row.get('rss_anon'))} / file {size(row.get('rss_file'))} / shared {size(row.get('rss_shmem'))}",
@@ -414,9 +432,23 @@ class SparkMem(App):
                 "PSS apportions shared CPU mappings; USS counts private resident pages.",
                 "GPU allocations are driver accounting, not extra RAM to add to PSS/RSS.",
                 "Exact CPU/GPU overlap and reclaimable GPU memory are not reported.",
+                "",
+                "ESTIMATED PLACEMENT (≈)",
+                f"RAM≈ = {row.get('resident_basis', 'unavailable')} + estimated compressed RAM",
+                f"Estimated compressed RAM: {size(row.get('compressed_ram_estimate'))}",
+                f"Attribution source: {row.get('estimate_basis', 'unavailable')}",
+                "Compression is apportioned by this process's share of logical swap.",
+                "Different processes compress differently; this is an average, not a measurement.",
+                "UMA max(PSS/RSS, GPU) can undercount disjoint CPU/GPU allocations.",
+                "RAM≈ also excludes unattributed kernel and unmapped file-cache memory.",
+                "NVMe≈ estimates this process's swap payload outside compressed RAM.",
+                "It excludes mapped files, reserved swapfile space, and filesystem overhead.",
+                "zswap still reserves disk swap slots; zero pages may skip disk writes.",
+                "Neither column is an exact physical total. Do not sum process rows.",
             ]
         if snapshot:
             summary = memory_summary(snapshot)
+            compression = host_compression(snapshot)
             lines += [
                 "",
                 "HOST MEMORY",
@@ -424,8 +456,21 @@ class SparkMem(App):
                 f"Free {size(snapshot['memory'].get('MemFree'))} · Shared/tmpfs {size(snapshot['memory'].get('Shmem'))}",
                 f"Slab {size(snapshot['memory'].get('Slab'))} · Unreclaimable slab {size(snapshot['memory'].get('SUnreclaim'))}",
                 f"Zswap pool {size(snapshot['memory'].get('Zswap'))} · Stored in zswap {size(snapshot['memory'].get('Zswapped'))}",
+                f"Measured compressed swap RAM (zswap + active zram): {size(compression['physical'])}",
                 f"Probe took {snapshot.get('duration', 0):.2f}s · {snapshot.get('skipped_processes', 0)} inaccessible/exited processes",
             ]
+            for zram in snapshot.get("swap_storage", {}).get("zram", []):
+                lines += [
+                    f"{zram['name']} · {'active swap' if zram['active_swap'] else 'inactive swap'}: "
+                    f"physical {size(zram['physical'])} / compressed data {size(zram['compressed'])} "
+                    f"/ original {size(zram['original'])}",
+                    f"  Writeback payload {size(zram['backing_bytes'])} · backing {zram['backing_kind']}",
+                ]
+            for device in snapshot.get("swap_storage", {}).get("devices", []):
+                lines += [
+                    f"Swap {device['path']} ({device['kind']}): "
+                    f"{size(device['used'])} logical slots used / {size(device['size'])} reserved"
+                ]
             for gpu in snapshot.get("gpus", []):
                 lines += [
                     f"{gpu['name']} · utilization {gpu.get('util')}% · {gpu.get('temperature')}°C",
@@ -497,7 +542,24 @@ class SparkMem(App):
                 "PSI is the % of the last 10 seconds some tasks stalled on memory.\n"
                 "The history shows used percentage over the last 60 samples.\n\n"
                 "PROCESS MEMORY\n"
-                "PSS apportions shared resident mappings. RSS includes shared mappings.\n"
+                "PSS (Proportional Set Size) divides shared resident pages among processes.\n"
+                "RSS (Resident Set Size) counts each process's shared pages in full.\n"
+                "Neither includes its swapped-out pages. For a 1 GiB mapping shared by\n"
+                "two processes, each gets 512 MiB PSS but 1 GiB RSS.\n\n"
+                "RAM≈ / NVMe≈ (ESTIMATES, NOT EXACT PHYSICAL OCCUPANCY)\n"
+                "RAM≈ = resident estimate + estimated compressed swap RAM.\n"
+                "Resident = PSS (RSS fallback), or max(that, GPU allocation) on UMA.\n"
+                "This heuristic can undercount disjoint CPU/GPU allocations.\n"
+                "Compressed RAM uses this process's share of cgroup logical swap\n"
+                "times the measured cgroup zswap pool, or the host average if absent.\n"
+                "NVMe≈ removes that scope's zswap fraction from process swap when\n"
+                "all used backing devices are NVMe. Mixed/unknown disks show —.\n"
+                "For active zram, host-average shares use actual mem_used_total\n"
+                "(including allocator overhead) and writeback counters. Mixed\n"
+                "zswap+zram layers show — rather than inventing a compression ratio.\n"
+                "NVMe≈ is swap payload, not preallocated swapfile size, filesystem\n"
+                "usage, or mapped model files. zswap still reserves disk swap slots.\n"
+                "Enter shows source counters and which approximation was used.\n\n"
                 "GPU alloc is NVIDIA's per-process allocation (compute AND graphics).\n"
                 "Do not add GPU + PSS/RSS: overlap is unknown on UMA. These counters\n"
                 "cannot produce an exact per-process physical total or CPU-only split.\n"

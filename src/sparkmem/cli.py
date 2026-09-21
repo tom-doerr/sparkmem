@@ -70,13 +70,14 @@ def main():
         if args.demo:
             from .demo import snapshots
 
+            demo_states = [HostState(host) for host in settings.hosts]
+            for state, data in zip(demo_states, snapshots(len(demo_states)), strict=True):
+                state.accept(data)
             print(
                 json.dumps(
                     {
-                        host.name: {"error": None, "snapshot": data}
-                        for host, data in zip(
-                            settings.hosts, snapshots(len(settings.hosts)), strict=True
-                        )
+                        state.host.name: {"error": None, "snapshot": state.snapshot}
+                        for state in demo_states
                     },
                     indent=2,
                 )

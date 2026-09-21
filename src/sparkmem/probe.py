@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import socket
+import stat
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -157,6 +158,78 @@ def process_info(path, users):
     }
 
 
+def block_kind(path, seen=None):
+    """Follow dm/RAID/partition layers without guessing that every SSD is NVMe."""
+    path = Path(path).resolve()
+    seen = set() if seen is None else seen
+    if str(path) in seen or len(seen) >= 16:
+        return "unknown"
+    seen = seen | {str(path)}
+    if re.fullmatch(r"nvme\d+(?:c\d+)?n\d+(?:p\d+)?", path.name):
+        return "nvme"
+    if re.fullmatch(r"zram\d+", path.name):
+        return "zram"
+    try:
+        slaves = list((path / "slaves").iterdir())
+    except OSError:
+        slaves = []
+    if slaves:
+        kinds = {block_kind(slave, seen) for slave in slaves}
+        return kinds.pop() if len(kinds) == 1 else "unknown"
+    if (path / "partition").exists():
+        return block_kind(path.parent, seen)
+    if re.fullmatch(r"(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|mmcblk\d+)", path.name):
+        return "disk"
+    # Loop devices/filesystems can hide arbitrary backing storage. Stay unknown.
+    return "unknown"
+
+
+def swap_kind(filename):
+    try:
+        info = os.stat(filename)
+        device = info.st_rdev if stat.S_ISBLK(info.st_mode) else info.st_dev
+        return block_kind(Path("/sys/dev/block") / f"{os.major(device)}:{os.minor(device)}")
+    except OSError:
+        return "unknown"
+
+
+def swap_storage(swaps_path="/proc/swaps", block_root="/sys/block"):
+    raw = read(swaps_path)
+    devices = []
+    for line in raw.splitlines()[1:]:
+        parts = line.rsplit(None, 4)
+        if len(parts) != 5 or not parts[2].isdigit() or not parts[3].isdigit():
+            continue
+        filename = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), parts[0])
+        devices.append(
+            {
+                "path": filename,
+                "kind": swap_kind(filename),
+                "size": int(parts[2]) * 1024,
+                "used": int(parts[3]) * 1024,
+            }
+        )
+    zram = []
+    for path in Path(block_root).glob("zram*"):
+        values = read(path / "mm_stat").split()
+        if len(values) < 3 or not all(value.isdigit() for value in values[:3]):
+            continue
+        backing = read(path / "backing_dev").strip()
+        bd = read(path / "bd_stat").split()
+        zram.append(
+            {
+                "name": path.name,
+                "original": int(values[0]),
+                "compressed": int(values[1]),
+                "physical": int(values[2]),
+                "backing_bytes": int(bd[0]) * 4096 if bd and bd[0].isdigit() else None,
+                "backing_kind": swap_kind(backing) if backing and backing != "none" else "none",
+                "active_swap": any(Path(d["path"]).name == path.name for d in devices),
+            }
+        )
+    return {"available": raw.startswith("Filename"), "devices": devices, "zram": zram}
+
+
 def collect_cgroups(root="/sys/fs/cgroup"):
     root = Path(root)
     if not (root / "cgroup.controllers").exists():
@@ -180,6 +253,7 @@ def collect_cgroups(root="/sys/fs/cgroup"):
         )
         limit = read(path / "memory.max").strip()
         swap = read(path / "memory.swap.current").strip()
+        zswap = read(path / "memory.zswap.current").strip()
         groups.append(
             {
                 "path": "/" + str(relative),
@@ -187,6 +261,8 @@ def collect_cgroups(root="/sys/fs/cgroup"):
                 "current": int(current),
                 "limit": int(limit) if limit.isdigit() else None,
                 "swap": int(swap) if swap.isdigit() else None,
+                "zswap": int(zswap) if zswap.isdigit() else None,
+                "zswapped": int(stats["zswapped"]) if "zswapped" in stats else None,
                 "anon": int(stats["anon"]) if "anon" in stats else None,
                 "file": int(stats["file"]) if "file" in stats else None,
             }
@@ -265,6 +341,7 @@ def collect(pss_limit=80, gpu=True):
         "gpus": devices,
         "processes": list(processes.values()),
         "cgroups": groups,
+        "swap_storage": swap_storage(),
         "notes": [note for note in (gpu_note, group_note) if note],
         "skipped_processes": skipped,
         "duration": time.monotonic() - started,

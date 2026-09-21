@@ -71,6 +71,8 @@ def snapshots(count=4):
                     "Cached": 5 * gib,
                     "SwapTotal": 16 * gib,
                     "SwapFree": 12 * gib,
+                    "Zswap": gib // 2,
+                    "Zswapped": 2 * gib,
                     "SReclaimable": gib,
                     "Shmem": gib,
                 },
@@ -97,8 +99,17 @@ def snapshots(count=4):
                         "file": 2 * gib,
                         "swap": 0,
                         "limit": None,
+                        "zswap": gib // 4,
+                        "zswapped": gib // 2,
                     }
                 ],
+                "swap_storage": {
+                    "available": True,
+                    "devices": [
+                        {"path": "/swap.img", "kind": "nvme", "used": 4 * gib, "size": 16 * gib}
+                    ],
+                    "zram": [],
+                },
                 "notes": [],
                 "duration": 0.25,
                 "skipped_processes": 0,

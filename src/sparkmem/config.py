@@ -8,8 +8,22 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-COLUMNS = ("host", "pid", "user", "label", "pss", "rss", "gpu", "swap", "cpu", "command", "cgroup")
-SORTS = ("impact", "gpu", "pss", "rss", "swap", "cpu")
+COLUMNS = (
+    "ram",
+    "nvme",
+    "gpu",
+    "swap",
+    "pss",
+    "rss",
+    "host",
+    "pid",
+    "user",
+    "label",
+    "cpu",
+    "command",
+    "cgroup",
+)
+SORTS = ("impact", "gpu", "ram", "nvme", "pss", "rss", "swap", "cpu")
 DEFAULT_PATH = (
     Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "sparkmem/config.toml"
 )

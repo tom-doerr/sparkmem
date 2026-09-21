@@ -4,8 +4,8 @@ timeout = 20.0
 pss_limit = 80 # Largest RSS processes plus all GPU processes; 0 = every process
 
 [view]
-sort = "impact" # impact, gpu, pss, rss, swap, cpu
-columns = ["host", "pid", "user", "label", "pss", "rss", "gpu", "swap", "cpu", "command"]
+sort = "impact" # impact, gpu, ram, nvme, pss, rss, swap, cpu
+columns = ["ram", "nvme", "gpu", "swap", "pss", "rss", "host", "pid", "user", "label", "cpu", "command"]
 theme = "textual-dark"
 
 [[hosts]]
@@ -38,4 +38,3 @@ name = "Embeddings / reranker"
 [[labels]]
 pattern = "postgres"
 name = "PostgreSQL"
-
