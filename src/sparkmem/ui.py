@@ -85,9 +85,11 @@ class SparkMem(App):
         self.group_view = False
         self.sort_key = settings.sort
         self.paused = False
-        self.query = ""
+        self.query_text = ""
         self.tasks = {}
         self.row_data = {}
+        self.visible_columns = list(settings.columns)
+        self.compact = False
         self.theme = settings.theme
 
     def compose(self) -> ComposeResult:
@@ -121,17 +123,36 @@ class SparkMem(App):
         self.set_interval(1, self.paint_cards)
         self.set_interval(self.settings.interval, self.poll)
         self.poll()
-        self.resize_cards(self.size.width)
+        self.resize_layout(self.size.width, self.size.height)
 
     def on_resize(self, event):
         if self.is_mounted:
-            self.resize_cards(event.size.width)
+            self.resize_layout(event.size.width, event.size.height)
 
-    def resize_cards(self, width):
+    def resize_layout(self, width, height):
+        self.compact = height < 32
+        card_height = 5 if self.compact else 7
         columns = min(len(self.states), 4 if width >= 150 else 2 if width >= 80 else 1)
         grid = self.query_one("#hosts", Grid)
         grid.styles.grid_size_columns = columns
-        grid.styles.height = min(16, ((len(self.states) + columns - 1) // columns) * 7)
+        grid.styles.grid_rows = str(card_height)
+        grid.styles.height = min(16, ((len(self.states) + columns - 1) // columns) * card_height)
+        for widget in self.query(".host-card"):
+            widget.styles.height = card_height
+        hidden = (
+            {"user", "cpu", "label", "cgroup"}
+            if width < 110
+            else {"user", "cpu"}
+            if width < 140
+            else set()
+        )
+        visible = [key for key in self.settings.columns if key not in hidden]
+        # A custom selection containing only normally hidden fields must remain usable.
+        visible = visible or list(self.settings.columns)
+        if visible != self.visible_columns:
+            self.visible_columns = visible
+            self.rebuild_columns()
+        self.paint()
 
     def poll(self, force=False):
         if self.demo or (self.paused and not force):
@@ -175,27 +196,34 @@ class SparkMem(App):
             if state.snapshot:
                 summary = memory_summary(state.snapshot)
                 pct = summary["used_percent"]
-                bar = int(pct / 100 * 16)
-                text.append(
-                    f"\n{'━' * bar}{'─' * (16 - bar)} {pct:.0f}%",
-                    style="red" if pct > 92 else "green",
-                )
-                text.append(f"  {size(summary['available'])} available")
-                text.append(
-                    f"\nUsed {size(summary['used'])}/{size(summary['total'])}  Cache≈{size(summary['cache'])}"
-                )
                 gpu_text = size(summary["gpu"]) + ("+?" if summary["gpu_partial"] else "")
-                text.append(f"\nGPU alloc {gpu_text}  Swap {size(summary['swap'])}")
-                psi = state.snapshot.get("pressure", {}).get("some", {}).get("avg10")
-                pressure = f"{psi:.1f}%" if psi is not None else "—"
-                text.append(
-                    f"\nPSI {pressure}  {age:.0f}s ago  {trend(state.history)}", style="dim"
-                )
-                if state.error:
-                    text.append("\n" + clean(state.error.splitlines()[-1]), style="red")
+                if self.compact:
+                    text.append(
+                        f"\n{size(summary['available'])} avail  {pct:.0f}% of {size(summary['total'])} used"
+                    )
+                    text.append(f"\nGPU {gpu_text}  Swap {size(summary['swap'])}  {age:.0f}s")
+                else:
+                    bar = min(10, max(0, int(pct / 100 * 10)))
+                    text.append(
+                        f"\n{'━' * bar}{'─' * (10 - bar)} {pct:.0f}%",
+                        style="red" if pct > 92 else "green",
+                    )
+                    text.append(f"  Avail {size(summary['available'])}")
+                    text.append(
+                        f"\nUsed {size(summary['used'])}/{size(summary['total'])}  Cache≈{size(summary['cache'])}"
+                    )
+                    text.append(f"\nGPU alloc {gpu_text}  Swap {size(summary['swap'])}")
+                    psi = state.snapshot.get("pressure", {}).get("some", {}).get("avg10")
+                    pressure = f"{psi:.1f}%" if psi is not None else "—"
+                    text.append(
+                        f"\nPSI {pressure}  {age:.0f}s ago  {trend(state.history)}", style="dim"
+                    )
             elif state.error:
                 text.append("\n" + clean(state.error), style="red")
             widget.update(text)
+            widget.tooltip = Text(
+                clean(state.error or "Enter on a process shows host details and telemetry notes.")
+            )
             widget.set_class(name == self.host_filter, "selected")
 
     def rebuild_columns(self):
@@ -225,20 +253,20 @@ class SparkMem(App):
                 "command": "Command / model",
                 "cgroup": "Service / container cgroup",
             }
-            columns = [(key, titles[key]) for key in self.settings.columns]
+            columns = [(key, titles[key]) for key in self.visible_columns]
         widths = {
-            "host": 12,
-            "pid": 8,
-            "user": 10,
-            "label": 24,
+            "host": 9,
+            "pid": 7,
+            "user": 8,
+            "label": 20,
             "command": 90,
             "cgroup": 70,
             "path": 100,
-            "pss": 8,
-            "rss": 8,
-            "gpu": 10,
-            "swap": 8,
-            "cpu": 7,
+            "pss": 6,
+            "rss": 6,
+            "gpu": 9,
+            "swap": 6,
+            "cpu": 6,
             "current": 9,
             "anon": 8,
             "file": 10,
@@ -267,7 +295,7 @@ class SparkMem(App):
                 if not state.snapshot or (self.host_filter and name != self.host_filter):
                     continue
                 for group in state.snapshot["cgroups"]:
-                    if self.query.casefold() in (name + " " + group["path"]).casefold():
+                    if self.query_text.casefold() in (name + " " + group["path"]).casefold():
                         rows.append(dict(group, host=name, key=name + ":" + group["path"]))
             rows.sort(key=lambda row: row["current"], reverse=True)
             for row in rows:
@@ -282,7 +310,7 @@ class SparkMem(App):
             rows = process_rows(
                 self.states,
                 self.settings,
-                self.query,
+                self.query_text,
                 self.host_filter,
                 self.gpu_only,
                 self.sort_key,
@@ -290,7 +318,7 @@ class SparkMem(App):
             for row in rows:
                 self.row_data[row["key"]] = row
                 values = []
-                for key in self.settings.columns:
+                for key in self.visible_columns:
                     if key in ("pss", "rss", "swap", "gpu"):
                         value = size(row.get("gpu_bytes" if key == "gpu" else key))
                     elif key == "cpu":
@@ -330,7 +358,7 @@ class SparkMem(App):
 
     @on(Input.Changed, "#search")
     def search_changed(self, event):
-        self.query = event.value
+        self.query_text = event.value
         self.paint()
 
     @on(Input.Submitted, "#search")

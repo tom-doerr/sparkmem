@@ -45,6 +45,11 @@ async def test_responsive_layout_and_stale_host(dimensions):
         await pilot.pause()
         assert "STALE" in str(app.query_one("#host-1", Static).render())
         assert app.query_one(DataTable).size.height >= 3
+        if dimensions == (80, 24):
+            assert app.query_one(DataTable).size.height >= 6
+            assert "gpu" in app.visible_columns
+            assert "command" in app.visible_columns
+            assert "label" not in app.visible_columns
 
 
 def test_display_unknown_and_untrusted_text():

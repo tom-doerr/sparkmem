@@ -21,7 +21,17 @@ def snapshots(count=4):
         nas = index == 3
         total, available = (32, 9) if nas else (120, (24, 12, 8)[index % 3])
         processes = []
-        for offset, (name, command, rss, gpu) in enumerate(workloads):
+        host_workloads = (
+            workloads
+            if not nas
+            else [
+                ("PostgreSQL", "postgres -D /var/lib/postgresql/data", 4, 0),
+                ("Redis", "redis-server *:6379", 1, 0),
+                ("Syncthing", "syncthing serve --no-browser", 2, 0),
+                ("Backup", "python backup.py --repository /srv/backup", 3, 0),
+            ]
+        )
+        for offset, (name, command, rss, gpu) in enumerate(host_workloads):
             gpu = 0 if nas else gpu
             processes.append(
                 {

@@ -97,7 +97,10 @@ class Settings:
                 isinstance(v, str) for v in label.values()
             ):
                 raise ValueError("labels require string pattern and name")
-            re.compile(label["pattern"])
+            try:
+                re.compile(label["pattern"])
+            except re.error as error:
+                raise ValueError(f"Invalid label regex: {error}") from error
         return self
 
 

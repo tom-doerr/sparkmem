@@ -4,6 +4,8 @@ A customizable terminal memory monitor for a fleet of **NVIDIA DGX Sparks and Li
 
 **UMA-aware:** system RAM is one shared pool. Linux PSS/RSS and NVIDIA GPU allocations appear side by side, never added into a misleading total.
 
+![sparkmem showing three Sparks and a NAS with synthetic demo data](docs/demo.png)
+
 ## Install and run
 
 Requires Python 3.11+ and OpenSSH on the machine running the TUI. Remote Linux hosts only need Python 3.8+, `/proc`, and optionally `nvidia-smi`.
@@ -39,6 +41,7 @@ sparkmem --hosts spark-3 --pss-limit 0     # PSS for every accessible process
 - Service/container memory charged through cgroup v2, including file cache. This also works on a CPU-only NAS.
 - GPU compute **and graphics** processes, merged by host PID. Unavailable counters remain unknown.
 - Independent polling: a slow or disconnected host does not freeze the others. Last successful samples remain visible and are marked stale.
+- Compact host cards on short terminals; narrow terminals prioritize memory and command columns. Full details remain available with Enter.
 
 ## Keys
 
@@ -111,4 +114,3 @@ uv run sparkmem --demo
 Tests exercise UMA accounting, NVIDIA XML, partial permissions, SSH timeouts, PID reuse, configuration, and keyboard flows using Textual's headless test driver. CI runs on Python 3.11–3.13. The remote probe intentionally has no third-party dependencies.
 
 MIT licensed.
-
