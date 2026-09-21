@@ -1,0 +1,15 @@
+Screen { background: #0b111b; }
+Header { background: #142236; color: #e2eaf5; }
+#hosts { grid-size: 2; grid-rows: 7; height: 14; padding: 0 1; overflow-y: auto; }
+.host-card { border: round #273b53; padding: 0 1; height: 7; color: #c2d2e7; }
+.host-card.selected { border: round #52d1dc; background: #112b36; }
+#status { height: 1; padding: 0 2; color: #80cbd4; text-style: bold; }
+#search { height: 3; margin: 0 1; border: tall #273b53; background: #101b29; }
+#search:focus { border: tall #52d1dc; }
+#processes { height: 1fr; min-height: 3; margin: 0 1; background: #0b111b; }
+DataTable > .datatable--header { background: #142236; color: #a2b8ce; text-style: bold; }
+DataTable > .datatable--cursor { background: #20435a; color: #ffffff; }
+DataTable > .datatable--odd-row { background: #0f1925; }
+#legend { height: auto; max-height: 2; padding: 0 1; color: #7d92a8; }
+Footer { background: #142236; }
+

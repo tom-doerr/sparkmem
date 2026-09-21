@@ -1,0 +1,41 @@
+[refresh]
+interval = 5.0
+timeout = 20.0
+pss_limit = 80 # Largest RSS processes plus all GPU processes; 0 = every process
+
+[view]
+sort = "impact" # impact, gpu, pss, rss, swap, cpu
+columns = ["host", "pid", "user", "label", "pss", "rss", "gpu", "swap", "cpu", "command"]
+theme = "textual-dark"
+
+[[hosts]]
+name = "spark-1"
+uma = true
+# transport = "auto" uses local collection on this hostname, SSH elsewhere.
+# target = "user@ssh-alias" # Defaults to name; uses ~/.ssh/config
+# python = "/usr/bin/python3" # Remote Python executable
+
+[[hosts]]
+name = "spark-2"
+uma = true
+
+[[hosts]]
+name = "spark-3"
+uma = true
+
+[[hosts]]
+name = "nas"
+gpu = false
+
+[[labels]]
+pattern = "vllm|VLLM::EngineCore"
+name = "vLLM inference"
+
+[[labels]]
+pattern = "infinity_emb|venvs/infinity"
+name = "Embeddings / reranker"
+
+[[labels]]
+pattern = "postgres"
+name = "PostgreSQL"
+
